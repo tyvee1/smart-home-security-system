@@ -1,0 +1,394 @@
+' =====================================================================
+' Smart Home Security System (SHSS) — SysML diagram set
+' Ty · v1.0 · 5 November 2026
+'
+' Four diagrams in one file. Paste the whole file into the PlantUML
+' editor at https://plantuml.com/plantuml, or render locally with:
+'     java -jar plantuml.jar sysml-diagrams.txt
+' Each @startuml block renders as its own image.
+' =====================================================================
+
+
+' ---------------------------------------------------------------------
+' 1. Block definition diagram — the structure of the system
+' ---------------------------------------------------------------------
+@startuml sysml-block-definition
+title bdd [package] Smart Home Security System [Structure]
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #5B626E
+  ArrowColor #5B626E
+  FontName Helvetica
+  FontSize 12
+  AttributeFontSize 11
+}
+hide circle
+
+class SmartHomeSecuritySystem <<block>> #EAF1FA {
+}
+
+class ControlUnit <<block>> {
+  + armingState : ArmingMode
+  + enrolledDevices : Integer
+  + logRetentionDays : Integer = 365
+  --
+  + evaluateRules() : void
+  + recordEvent(e : Event) : void
+  + setArmingState(m : ArmingMode) : Boolean
+  + raiseSupervisionFault(d : DeviceId) : void
+}
+
+class Sensor <<block>> {
+  + zoneId : String
+  + zoneClass : {instant, delayed, perimeter}
+  + batteryPct : Integer
+  + heartbeatSec : Second = 30
+  --
+  + assertDetection() : void
+  + heartbeat() : void
+  + reportTamper() : void
+}
+
+class MotionSensor <<block>> {
+  + rangeM : Metre = 10
+  + speedMinMps : Real = 0.3
+  + speedMaxMps : Real = 2.5
+  + petImmuneKg : Kilogram = 18
+}
+
+class DoorWindowSensor <<block>> {
+  + gapThresholdMm : Millimetre = 15
+}
+
+class WaterLeakSensor <<block>> {
+  + alarmWithinSec : Second = 5
+  + armingIndependent : Boolean = true
+}
+
+class Camera <<block>> {
+  + resolution : Pixels = 1920x1080
+  + frameRate : Hertz = 15
+  + irRangeM : Metre = 8
+  + privacyMask : Region [0..*]
+  + preRollSec : Second = 10
+  --
+  + stream() : VideoStream
+  + record(trigger : Event) : Clip
+  + applyMaskBeforeEncoding() : void
+}
+
+class AlarmSystem <<block>> {
+  + splAt3m : dBA = 85
+  + exteriorCapMin : Minute = 10
+  + abortWindowSec : Second = 30
+  --
+  + sound() : void
+  + strobe() : void
+  + silence() : void
+}
+
+class UserInterface <<block>> {
+  + surface : {wallPanel, mobileApp, browser, keyFob}
+  + contrastRatio : Real = 4.5
+  + languages : String [1..*] = {en, es}
+  --
+  + arm(mode : ArmingMode) : Boolean
+  + disarm(credential : Credential) : Boolean
+  + viewLive(zone : ZoneId) : VideoStream
+}
+
+class PowerSupply <<block>> {
+  + mainsVolts : Volt = 120
+  + railVolts : Volt = 12
+  + backupHours : Hour = 8
+  --
+  + switchToBackup() : void
+  + reportRailHealth() : Health
+}
+
+class CloudServices <<block>> {
+  + endpoint : URI
+  + clipRetentionDays : Integer = 90
+  + transport : String = "MQTT 5 over TLS 1.3"
+  --
+  + relayEvent(e : Event) : void
+  + pushNotify(u : UserId, e : Event) : void
+  + distributeFirmware() : Manifest
+}
+
+class Controller <<block>> {
+  + protocol : {ZWave, MatterOverThread}
+  + deviceType : {lock, light, relay}
+  --
+  + actuate(cmd : Command) : Ack
+  + reportState() : DeviceState
+}
+
+class PoENetworkSwitch <<block>> {
+  + standard : String = "IEEE 802.3af"
+  + inputVolts : Volt = 12
+  + outputVolts : Volt = 48
+  + vlanIsolation : Boolean = true
+}
+
+class SensorBusRegulator <<block>> {
+  + inputVolts : Volt = 12
+  + outputVolts : Volt = 3.3
+}
+
+SmartHomeSecuritySystem *-- "1" ControlUnit
+SmartHomeSecuritySystem *-- "1..64" Sensor
+SmartHomeSecuritySystem *-- "0..16" Camera
+SmartHomeSecuritySystem *-- "1" AlarmSystem
+SmartHomeSecuritySystem *-- "1..*" UserInterface
+SmartHomeSecuritySystem *-- "1" PowerSupply
+SmartHomeSecuritySystem o-- "0..1" CloudServices
+SmartHomeSecuritySystem *-- "0..32" Controller
+SmartHomeSecuritySystem *-- "1" PoENetworkSwitch
+SmartHomeSecuritySystem *-- "1" SensorBusRegulator
+
+Sensor <|-- MotionSensor
+Sensor <|-- DoorWindowSensor
+Sensor <|-- WaterLeakSensor
+
+note right of CloudServices
+  Aggregation, not composition.
+  SHSS-F-026 requires the system to
+  detect, record, sound and log with
+  the relay unreachable, so the system
+  does not own this part's lifetime.
+end note
+
+note bottom of PoENetworkSwitch
+  Declared as its own block because it
+  converts 12 V to 48 V. An undeclared
+  converter is how an ICD ends up with a
+  12 V source feeding a 48 V part.
+end note
+@enduml
+
+
+' ---------------------------------------------------------------------
+' 2. Requirement diagram — requirements and their relationships
+' ---------------------------------------------------------------------
+@startuml sysml-requirements
+title req [package] SHSS [Requirements and relationships]
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #5B626E
+  ArrowColor #5B626E
+  FontName Helvetica
+  FontSize 11
+}
+hide circle
+
+class "NEED-01\nThe owner learns about an\nintrusion fast enough to act" as N01 <<stakeholderNeed>> #F6F3EE
+class "NEED-15\nAn internet outage is not\na security outage" as N15 <<stakeholderNeed>> #F6F3EE
+
+class "SHSS-P-001\nAlarm notification reaches a remote\nuser device within 10 s of detection,\n95th percentile" as P001 <<requirement>>
+class "SHSS-F-001\nControl Unit registers a motion event\nwithin 2 s of the sensor asserting\ndetection" as F001 <<requirement>>
+class "SHSS-F-033\nAlarm notification delivered to every\nsubscribed device within 10 s, 95th\npercentile over 100 events" as F033 <<requirement>>
+class "SHSS-F-026\nControl Unit continues to detect,\nrecord, sound and log while the\nCloud Relay is unreachable" as F026 <<requirement>>
+class "SHSS-F-016\nAlarm sounds locally whether or not\nthe Cloud Relay is reachable" as F016 <<requirement>>
+class "SHSS-F-035\nNotifications queue while the relay is\nunreachable and replay marked with\ntheir original event time" as F035 <<requirement>>
+
+class "ControlUnit" as BCU <<block>> #EAF1FA
+class "MotionSensor" as BMS <<block>> #EAF1FA
+class "AlarmSystem" as BAL <<block>> #EAF1FA
+
+class "TC-VAL-001\nMotion detection and\nalert notification" as T1 <<testCase>> #EAF7EE
+class "TC-VAL-006\nDegraded operation with\nthe relay unreachable" as T6 <<testCase>> #EAF7EE
+class "TC-VER-001\nMotion sensor integration" as T7 <<testCase>> #EAF7EE
+
+N01 <.. P001 : «deriveReqt»
+N15 <.. F026 : «deriveReqt»
+
+P001 <.. F001 : «deriveReqt»
+P001 <.. F033 : «deriveReqt»
+F026 <.. F016 : «deriveReqt»
+F026 <.. F035 : «deriveReqt»
+
+BMS ..> F001 : «satisfy»
+BCU ..> F033 : «satisfy»
+BCU ..> F026 : «satisfy»
+BAL ..> F016 : «satisfy»
+
+T1 ..> P001 : «verify»
+T1 ..> F016 : «verify»
+T6 ..> F026 : «verify»
+T6 ..> F035 : «verify»
+T7 ..> F001 : «verify»
+
+note as NOTE1
+  Three relationship types, three different meanings:
+  «deriveReqt»  this requirement exists because of that one
+  «satisfy»     this design element is allocated the requirement
+  «verify»      this test case produces the evidence
+  A requirement with a satisfy and no verify has an owner
+  and no evidence. That is the gap this diagram exists to show.
+end note
+@enduml
+
+
+' ---------------------------------------------------------------------
+' 3. State machine — arming states
+' ---------------------------------------------------------------------
+@startuml sysml-state-machine
+title stm [block] ControlUnit [Arming states]
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #FFFFFF
+  BorderColor #5B626E
+  ArrowColor #5B626E
+  FontName Helvetica
+  FontSize 12
+}
+
+[*] --> Disarmed
+
+state Disarmed : sensors report and log
+state Disarmed : no intrusion alarm
+state Disarmed : leak and tamper alarms stay active
+
+state Arming : exit delay 30-120 s, default 60
+state Arming : open perimeter zones announced
+
+state "Armed Stay" as Stay : perimeter active
+state "Armed Stay" as Stay : interior motion bypassed
+
+state "Armed Away" as Away : all intrusion zones active
+
+state "Entry Delay" as Entry : 15-60 s, default 30
+state "Entry Delay" as Entry : delayed zone opened
+
+state Alarm #FDECEB : annunciators sound
+state Alarm #FDECEB : triggering camera records
+state Alarm #FDECEB : notifications sent
+state Alarm #FDECEB : monitoring signalled after the abort window
+
+state Maintenance : alarm outputs inhibited
+state Maintenance : owner notified on entry and exit
+state Maintenance : 4 hour session limit
+
+Disarmed --> Arming : arm(Stay | Away)
+Arming --> Stay : exitDelayExpired [Stay selected]
+Arming --> Away : exitDelayExpired [Away selected]
+Arming --> Disarmed : validDisarm
+
+Stay --> Entry : delayedZoneOpened
+Away --> Entry : delayedZoneOpened
+Stay --> Alarm : instantZoneViolated
+Away --> Alarm : instantZoneViolated
+Stay --> Disarmed : validDisarm
+Away --> Disarmed : validDisarm
+
+Entry --> Disarmed : validDisarm
+Entry --> Alarm : entryDelayExpired
+
+Alarm --> Disarmed : validDisarm / cancel monitoring if within abort window
+
+Disarmed --> Maintenance : maintainerSession [owner consent]
+Maintenance --> Disarmed : sessionEnded | 4h limit
+
+Disarmed --> Alarm : waterLeakDetected | tamperDetected
+Stay --> Alarm : duressCodeEntered
+Away --> Alarm : duressCodeEntered
+
+note right of Alarm
+  Degraded is orthogonal to these states,
+  not one of them: the system can be
+  Degraded while Armed Away. Degraded
+  never suppresses a transition into Alarm.
+  Modelling it as a sibling state would make
+  an outage look like an arming mode.
+end note
+@enduml
+
+
+' ---------------------------------------------------------------------
+' 4. Sequence diagram — an intrusion, end to end
+' ---------------------------------------------------------------------
+@startuml sysml-sequence
+title sd [interaction] Intrusion detected while Armed Away
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #5B626E
+  LifeLineBorderColor #8A919C
+  ParticipantBorderColor #5B626E
+  ParticipantBackgroundColor #FFFFFF
+  ActorBorderColor #5B626E
+  FontName Helvetica
+  FontSize 11
+}
+
+actor Intruder
+participant "Door/Window\nSensor" as DW
+participant "Control Unit" as CU
+participant "Camera" as CAM
+participant "Alarm\nAnnunciator" as AL
+participant "Cloud Relay" as CR
+actor "Homeowner" as HO
+participant "Monitoring\nService" as MS
+
+note over CU : state = Armed Away
+
+Intruder -> DW : forces rear door
+DW -> CU : sensorEvent(zone=R2, open)\n<< Z-Wave, AES-128 >>
+note right of CU : SHSS-F-005 — within 2 s
+
+alt zone is instant
+  CU -> CU : setState(Alarm)
+else zone is delayed
+  CU -> CU : setState(Entry Delay)
+  note right of CU : 30 s to disarm
+  CU -> CU : entryDelayExpired → setState(Alarm)
+end
+
+CU -> CAM : record(trigger=R2, preRoll=10 s)
+activate CAM
+CAM --> CU : clipHandle
+note right of CAM : SHSS-F-011 — recording\nstarts within 1 s and\nincludes the 10 s before
+deactivate CAM
+
+CU -> AL : sound()
+activate AL
+AL --> CU : ack
+note right of AL : SHSS-F-015 — 85 dBA at 3 m\nwithin 1 s. Local, so it fires\nwhether or not CR is reachable.
+deactivate AL
+
+CU -> CU : appendEventLog(identity, zone, time)
+
+group Cloud Relay reachable
+  CU -> CR : event(zone=R2, type=intrusion, t)
+  CR -> HO : push notification
+  note right of HO : SHSS-P-001 — 10 s end to end,\n95th percentile
+  CU -> CR : upload(alarm clip)
+end
+
+group Cloud Relay unreachable  [SHSS-F-026, SHSS-F-035]
+  CU -> CU : queue event locally, up to 7 days
+  CU -> MS : SIA DC-09 over LTE failover
+  note right of CU : Alarm still sounded.\nRecording still made.\nLog still written.\nOnly remote delivery is delayed.
+end
+
+opt abort window has not expired
+  HO -> CU : disarm(credential)
+  CU -> AL : silence()
+  CU -> MS : cancel signal
+  note right of CU : SHSS-F-019 — 15 to 60 s,\ndefault 30. Most alarms are\nthe owner's own mistake.
+end
+
+opt duress code used
+  HO -> CU : disarm(duressCode)
+  CU -> AL : silence()
+  CU -> MS : silent alarm, dispatch
+  note right of CU : SHSS-F-018 and SHSS-O-003 —\nno visual, audible or haptic\ndifference from a normal disarm.
+end
+@enduml
